@@ -1,3 +1,6 @@
+// Provides a HTTP/REST interface to the contents of a torrent file
+//
+// Use NewTorrentProxy to create an instance.
 package proxy
 
 import (
@@ -12,40 +15,7 @@ import (
 	"github.com/anacrolix/torrent"
 )
 
-// The publically exposed configuration for our TorrentProxy
-type Config struct {
-	// The list of nodes to seed DHT lookups
-	DHTNodes []string
-
-	// The torrent URL to download can be a magnet URL
-	// or a http/https URL to a torrent file which will be downloaded
-	TorrentURL string
-
-	// Where should the HTTP Server listen
-	HTTPListenAddr string
-
-	// Where should the Torrent client listen
-	TorrentListenAddr string
-
-	// where to store downloaded data
-	DataDir string
-}
-
-type TorrentFile struct {
-	Path   string `json:"path"`
-	Length int64  `json:"length"`
-	// 0 = not downloaded, 1 = fully downloaded
-	Complete float32 `json:"complete"`
-}
-
-type TorrentStatus struct {
-	// pending if we are still loading the info hash, ready if we can attempt streaming
-	Status string         `json:"status"`
-	Hash   string         `json:"id"`
-	Name   string         `json:"name"`
-	Files  []*TorrentFile `json:"files"`
-}
-
+// Use NewTorrentProxy to create
 type TorrentProxy struct {
 	config    *Config
 	client    *torrent.Client
@@ -53,7 +23,60 @@ type TorrentProxy struct {
 	httperror chan error
 }
 
-// Start our torrent client by resolving DHT nodes and the torrent URL
+// Proxy configuration.
+//
+// TorrentURL must be specified. All other configuration is optional.
+type Config struct {
+	// A URL to a torrrent file.  Supported Schemes are:
+	//
+	//   - magnet: The TorrentSpec will contain information decoded from the URL only
+	//
+	//   - http/https: A GET request will be made to this URL.
+	//     The response to the request must include he torrent file with a 200 OK status code.
+	TorrentURL string
+
+	// The list of nodes to seed DHT lookups.
+	// If not specified, DHT will be disabled.
+	DHTNodes []string
+
+	// host:port for the HTTP server.
+	// If not specified, defaults to a random port on localhost.
+	HTTPListenAddr string
+
+	// host:port for the torrent client
+	// If not specified, defaults to a random port on all interfaces.
+	TorrentListenAddr string
+
+	// Path to a directory in which torrent data will be stored.
+	// If not specified, defaults to current directory.
+	DataDir string
+}
+
+// The state of a given file in a torrent
+type TorrentFile struct {
+	// The path to the file
+	Path string `json:"path"`
+	// The total size of the file
+	Length int64 `json:"length"`
+	// The percentage of pieces needs for this file that have been downloaded
+	// 0.0. = not downloaded, 1.0 = fully downloaded
+	Complete float32 `json:"complete"`
+}
+
+// The state of the torrent being proxied
+type TorrentStatus struct {
+	// "pending" if we are still loading the info hash.
+	// "ready" if we have enough info to start downloading
+	Status string `json:"status"`
+	// The infohash in hexstring format
+	Hash string `json:"id"`
+	// The name of the torrent
+	Name string `json:"name"`
+	// The state of each file in the torrent
+	Files []*TorrentFile `json:"files"`
+}
+
+// Configure and strt the torrent client
 func (p *TorrentProxy) startTorrentClient() (err error) {
 	// make sure our DHT nodes are legit before starting
 	resolvedDHTNodes, err := resolveDHTNodes(p.config.DHTNodes)
@@ -61,7 +84,12 @@ func (p *TorrentProxy) startTorrentClient() (err error) {
 		return fmt.Errorf("Error resolving DHT node: %s", err)
 	}
 
+	nodht := false
 	log.Printf("Initial DHT Nodes: %s", resolvedDHTNodes)
+	if len(resolvedDHTNodes) == 0 {
+		log.Print("No DHT nodes supplied. Disabling DHT.")
+		nodht = true
+	}
 
 	// make sure we have a torrent before starting
 	spec, err := torrentSpecFromURL(p.config.TorrentURL)
@@ -76,6 +104,7 @@ func (p *TorrentProxy) startTorrentClient() (err error) {
 		DataDir:    p.config.DataDir,
 		ListenAddr: p.config.TorrentListenAddr,
 
+		NoDHT: nodht,
 		DHTConfig: dht.ServerConfig{
 			StartingNodes: func() ([]dht.Addr, error) {
 				return resolvedDHTNodes, nil
@@ -95,11 +124,8 @@ func (p *TorrentProxy) startTorrentClient() (err error) {
 	return
 }
 
-// Configure and start the Web Server
+// Configure and start the web server
 func (p *TorrentProxy) startHTTPServer() (err error) {
-	// all request to the ServeHTTP function
-	http.Handle("/", p)
-
 	// we do this instead of listenandserve so we can trap any errors listening
 	listener, err := net.Listen("tcp", p.config.HTTPListenAddr)
 	if err != nil {
@@ -112,18 +138,20 @@ func (p *TorrentProxy) startHTTPServer() (err error) {
 	p.httperror = make(chan error)
 
 	go func() {
-		p.httperror <- http.Serve(listener, nil)
+		p.httperror <- http.Serve(listener, p)
 	}()
 
 	return
 }
 
-// return where to find our webserver
+// Return the URL for the websever.
+//
+// This can be used to find the webserver if it's started on a random port.
 func (p *TorrentProxy) URL() string {
 	return "http://" + p.config.HTTPListenAddr
 }
 
-// block until webserver exists
+// Block until the webserver stops.
 func (p *TorrentProxy) Run() (err error) {
 	err = <-p.httperror
 	return
@@ -167,7 +195,10 @@ func (p *TorrentProxy) Status() (s *TorrentStatus) {
 	return
 }
 
-// handle HTTP requests
+// Implement Handler interface for net/http.Serve().  The following URLs are supported:
+//   / - Return TorrentStatus as JSON
+//
+//   /path/to/file/in/torrent - Return the contents of the file, or 404 if it does not exist.
 func (p *TorrentProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// if it's the / request, then serve status
 	if r.URL.Path == "/" {
@@ -195,12 +226,13 @@ func (p *TorrentProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// stream the file
+	// serve te file
 	thefile.Download()
 	log.Printf("%d %s", 200, r.URL.Path)
 	http.ServeContent(w, r, thefile.Path(), time.Now(), &torrentReadSeeker{Reader: p.torrent.NewReader(), File: &thefile})
 }
 
+// Closes the torrent client and all files.
 func (p *TorrentProxy) Close() {
 	if p.client != nil {
 		p.client.Close()
@@ -209,11 +241,16 @@ func (p *TorrentProxy) Close() {
 	}
 }
 
-// Start a new proxy
+// Create an instance of the proxy.
 func NewTorrentProxy(config *Config) (proxy *TorrentProxy, err error) {
+	//comments here?
 	if len(config.HTTPListenAddr) == 0 {
 		config.HTTPListenAddr = "localhost:0"
 	}
+	if len(config.TorrentListenAddr) == 0 {
+		config.TorrentListenAddr = ":0"
+	}
+
 	proxy = &TorrentProxy{
 		config: config,
 	}

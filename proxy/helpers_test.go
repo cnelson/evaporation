@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"log"
 	"net"
 	"net/http"
 
@@ -124,13 +125,12 @@ var _ = Describe("Helpers", func() {
 		)
 
 		Context("When no nodes are provided", func() {
-			our, ourerr := resolveDHTNodes(nodes)
-			upstream, uperr := dht.GlobalBootstrapAddrs()
+			resolvedNodes, err := resolveDHTNodes(nodes)
 
-			It("should use the default upstream list", func() {
-				Expect(our).To(Equal(upstream))
-				Expect(ourerr).To(Succeed())
-				Expect(uperr).To(Succeed())
+			log.Print(resolvedNodes)
+			It("should return an empty list", func() {
+				Expect(len(resolvedNodes)).To(Equal(0))
+				Expect(err).To(Succeed())
 			})
 		})
 

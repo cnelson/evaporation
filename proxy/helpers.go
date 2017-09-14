@@ -11,7 +11,13 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 )
 
-// Convert magnet urls or http/https urls to torrent files into a TorrentSpec
+// Convert a URL into a TorrentSpec.
+// Supported Schemes are:
+//
+//   - magnet: The TorrentSpec will contain information decoded from the URL only
+//
+//   - http/https: A GET request will be made to this URL.
+//     The response to the request must include he torrent file with a 200 OK status code.
 func torrentSpecFromURL(input string) (output *torrent.TorrentSpec, err error) {
 	if len(input) == 0 {
 		return output, fmt.Errorf("URL not specified")
@@ -64,6 +70,11 @@ func torrentSpecFromURL(input string) (output *torrent.TorrentSpec, err error) {
 
 // If given a list of DHT nodes, then resolve those, and return in a format appropriate for the client
 // If not list is provided, use the defaults provided by the client
+
+// Resolve all DHT nodes.
+// nodes is an array of host:port strings. See net.Dial() docs for valid formats.
+//
+// Returns an error if any of the items are not resolvable.
 func resolveDHTNodes(nodes []string) (resolvedDHTNodes []dht.Addr, err error) {
 	for _, hostport := range nodes {
 		addr, err := net.ResolveUDPAddr("udp", hostport)
@@ -71,10 +82,6 @@ func resolveDHTNodes(nodes []string) (resolvedDHTNodes []dht.Addr, err error) {
 			return resolvedDHTNodes, err
 		}
 		resolvedDHTNodes = append(resolvedDHTNodes, dht.NewAddr(addr))
-	}
-
-	if len(resolvedDHTNodes) == 0 {
-		resolvedDHTNodes, err = dht.GlobalBootstrapAddrs()
 	}
 
 	return

@@ -40,18 +40,13 @@ var _ = Describe("Proxy", func() {
 		})
 
 		It("returns an error when given a bad torrent url", func() {
-			nodes := []string{"127.0.0.1:65535"}
-			p, err = NewTorrentProxy(&Config{
-				DHTNodes: nodes,
-			})
+			p, err = NewTorrentProxy(&Config{})
 
 			Expect(err).To(MatchError(ContainSubstring("Invalid torrent")))
 		})
 
 		It("returns an error when given bad http listen address", func() {
-			nodes := []string{"127.0.0.1:65535"}
 			p, err = NewTorrentProxy(&Config{
-				DHTNodes:       nodes,
 				TorrentURL:     "magnet:?xt=urn:btih:adecafcafeadecafcafeadecafcafeadecafcafe",
 				HTTPListenAddr: "localhost:99999",
 			})
@@ -60,14 +55,37 @@ var _ = Describe("Proxy", func() {
 		})
 
 		It("returns an error when given bad torrent listen address", func() {
-			nodes := []string{"127.0.0.1:65535"}
 			p, err = NewTorrentProxy(&Config{
-				DHTNodes:          nodes,
 				TorrentURL:        "magnet:?xt=urn:btih:adecafcafeadecafcafeadecafcafeadecafcafe",
 				TorrentListenAddr: "localhost:99999",
 			})
 
 			Expect(err).To(MatchError(ContainSubstring("invalid port")))
+		})
+
+	})
+
+	Context("DHTnodes", func() {
+		It("disabled DHT when no nodes are provided", func() {
+			p, err = NewTorrentProxy(&Config{
+				TorrentURL:        "magnet:?xt=urn:btih:adecafcafeadecafcafeadecafcafeadecafcafe",
+				TorrentListenAddr: "localhost:0",
+			})
+
+			Expect(err).To(Succeed())
+			Expect(p.client.DHT()).To(BeNil())
+		})
+
+		It("enables DHT when no nodes are provided", func() {
+			nodes := []string{"127.0.0.1:65535"}
+			p, err = NewTorrentProxy(&Config{
+				DHTNodes:          nodes,
+				TorrentListenAddr: "localhost:0",
+				TorrentURL:        "magnet:?xt=urn:btih:adecafcafeadecafcafeadecafcafeadecafcafe",
+			})
+
+			Expect(err).To(Succeed())
+			Expect(p.client.DHT()).To(Not(BeNil()))
 		})
 
 	})
@@ -86,12 +104,10 @@ var _ = Describe("Proxy", func() {
 			torrentURL := "http://" + listener.Addr().String() + "/a-torrent"
 			go http.Serve(listener, nil)
 
-			// don't talk to the internet when testing
-			nodes := []string{"127.0.0.1:65535"}
 			p, err = NewTorrentProxy(&Config{
-				DHTNodes:   nodes,
-				TorrentURL: torrentURL,
-				DataDir:    "testdata",
+				TorrentURL:        torrentURL,
+				TorrentListenAddr: "localhost:0",
+				DataDir:           "testdata",
 			})
 
 			Expect(err).To(Succeed())

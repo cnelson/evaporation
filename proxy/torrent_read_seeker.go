@@ -6,14 +6,15 @@ import (
 	"io"
 )
 
-// impelment the ReadSeeker Interface for a given file in the torrent
+// Impelment the ReadSeeker interface for a given file in the torrent.
 type torrentReadSeeker struct {
 	Reader *torrent.Reader
 	File   *torrent.File
 }
 
-// Read the request data from the torrent file
-// instructing the client to download that data from the swarm
+// Read the requested data from a file in the torrent.
+//
+// This will block until the requested data has been downloaded from the swarm.
 func (trs *torrentReadSeeker) Read(p []byte) (n int, err error) {
 	// if there was no seek before the call to us
 	// make sure we are at byte 0 of the file
@@ -40,10 +41,12 @@ func (trs *torrentReadSeeker) Read(p []byte) (n int, err error) {
 	return copy(p, buf), err
 }
 
-// adjust seek requests to deal with the offset for multi-file torrents
+// Adjust seek requests to deal with the offset for multi-file torrents.
+//
+// Because we only have a reader for the entire torrent, we need to adjust seeks to hide
+// the offset from the caller.
+//
 // net.HTTP expects a file to start and 0, and will Seek to (0, io.SeekEnd) to check length
-// We need to hide the file offset from it, so it will do the needful
-// log.Print("Seek Input : ", offset, whence)
 func (trs *torrentReadSeeker) Seek(offset int64, whence int) (int64, error) {
 
 	if whence == io.SeekStart {

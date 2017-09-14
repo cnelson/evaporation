@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/cnelson/evaporation/proxy"
+
+	"github.com/anacrolix/dht"
 )
 
 type multiValue []string
@@ -41,6 +43,13 @@ func main() {
 	if flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	if len(dhtNodes) == 0 {
+		nodes, _ := dht.GlobalBootstrapAddrs()
+		for _, node := range nodes {
+			dhtNodes = append(dhtNodes, node.String())
+		}
 	}
 
 	proxy, err := proxy.NewTorrentProxy(&proxy.Config{
